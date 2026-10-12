@@ -19,6 +19,11 @@
   binance-client
   bybit-client
   hl-client
+  okx-feed
+  coinbase-feed
+  kraken-feed
+  deribit-feed
+  bitget-feed
   yojson
   market-replay)
  (preprocess

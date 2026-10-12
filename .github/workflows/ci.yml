@@ -16,6 +16,11 @@ jobs:
             parquet https://github.com/winterchill-trading/parquet.git
             market-data https://github.com/winterchill-trading/market-data.git
             venue-net https://github.com/winterchill-trading/venue-net.git
+            okx-feed https://github.com/winterchill-trading/okx-feed.git
+            coinbase-feed https://github.com/winterchill-trading/coinbase-feed.git
+            kraken-feed https://github.com/winterchill-trading/kraken-feed.git
+            deribit-feed https://github.com/winterchill-trading/deribit-feed.git
+            bitget-feed https://github.com/winterchill-trading/bitget-feed.git
             hl-protocol https://github.com/winterchill-trading/hl-protocol.git
             binance-protocol https://github.com/winterchill-trading/binance-protocol.git
             bybit-protocol https://github.com/winterchill-trading/bybit-protocol.git

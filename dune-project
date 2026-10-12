@@ -37,4 +37,9 @@
   uri
   (hl-client :with-test)
   (binance-client :with-test)
-  (bybit-client :with-test)))
+  (bybit-client :with-test)
+  (okx-feed :with-test)
+  (coinbase-feed :with-test)
+  (kraken-feed :with-test)
+  (deribit-feed :with-test)
+  (bitget-feed :with-test)))
