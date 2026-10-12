@@ -42,9 +42,11 @@ end
 
 type t
 
-(** [send] writes one text frame to the client; its deferred is the pushback. *)
+(** [send] writes one text frame to the client; its deferred is the pushback. [metrics]
+    counts frames, replies and skipped gaps under [venue]. *)
 val create
-  :  ?time_source:Time_source.t
+  :  ?metrics:Metrics.t
+  -> ?time_source:Time_source.t
   -> ?on_frame:(Source.Item.t -> unit)
   -> Config.t
   -> Source.t

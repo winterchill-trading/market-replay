@@ -51,6 +51,7 @@ type t =
   ; send : string -> unit Deferred.t
   ; time_source : Time_source.t
   ; on_frame : Source.Item.t -> unit
+  ; metrics : Metrics.t option
   ; mutable subscribed : Series.Set.t
   ; mutable readers : Reader.t list
   ; mutable started_at : Time_ns.t option (** wall time the replay started *)
@@ -139,12 +140,14 @@ let emit t (item : Source.Item.t) =
   match item with
   | Gap _ ->
     t.gaps_skipped <- t.gaps_skipped + 1;
+    Option.iter t.metrics ~f:(fun m -> Metrics.ws_gap m t.venue);
     return ()
   | Frame { stream; symbol; frame; _ } ->
     if Set.mem t.subscribed { Series.stream; symbol }
        && Venue_protocol.is_data t.venue frame
     then (
       t.frames_sent <- t.frames_sent + 1;
+      Option.iter t.metrics ~f:(fun m -> Metrics.ws_frame m t.venue);
       t.send frame)
     else return ()
 ;;
@@ -215,6 +218,7 @@ let start_replay t =
 ;;
 
 let create
+  ?metrics
   ?(time_source = Time_source.wall_clock ())
   ?(on_frame = ignore)
   (config : Config.t)
@@ -230,6 +234,7 @@ let create
   ; send
   ; time_source = Time_source.read_only time_source
   ; on_frame
+  ; metrics
   ; subscribed = Series.Set.empty
   ; readers = []
   ; started_at = None
@@ -247,6 +252,7 @@ let create
 let reply t replies =
   Deferred.List.iter replies ~how:`Sequential ~f:(fun r ->
     t.replies_sent <- t.replies_sent + 1;
+    Option.iter t.metrics ~f:(fun m -> Metrics.ws_reply m t.venue);
     t.send r)
 ;;
 
