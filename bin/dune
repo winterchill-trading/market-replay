@@ -1,0 +1,7 @@
+(executable
+ (name main)
+ (public_name market-replay)
+ (package market-replay)
+ (libraries core core_unix.command_unix async cohttp-async market-replay)
+ (preprocess
+  (pps ppx_jane)))
