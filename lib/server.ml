@@ -1,9 +1,17 @@
 open! Core
 open! Async
 
-type t = { source : Source.t }
+type t =
+  { source : Source.t
+  ; ws : Ws_replay.Config.t option
+  ; time_source : Time_source.t
+  ; mutable next_conn_id : int
+  }
 
-let create source = { source }
+let create ?ws ?(time_source = Time_source.wall_clock ()) source =
+  { source; ws; time_source = Time_source.read_only time_source; next_conn_id = 0 }
+;;
+
 let text = Cohttp.Header.of_list [ "content-type", "text/plain; charset=utf-8" ]
 
 let respond_text ~status body =
@@ -35,11 +43,110 @@ let replay_http t uri =
     `Response response
 ;;
 
+(* The session config: the server's, with [from], [to] and [speed] from the query. *)
+let ws_config t uri =
+  let open Or_error.Let_syntax in
+  let param name ~f =
+    match Uri.get_query_param uri name with
+    | None | Some "" -> Ok None
+    | Some v -> f v >>| Option.some
+  in
+  let%bind start = param "from" ~f:Raw_line.parse_time in
+  let%bind stop = param "to" ~f:Raw_line.parse_time in
+  let%bind speed =
+    param "speed" ~f:(fun v -> Or_error.try_with (fun () -> Float.of_string v))
+  in
+  match start, t.ws with
+  | None, None ->
+    Or_error.error_s
+      [%message "no replay start: pass ?from= or start the server with -from"]
+  | Some start, _ ->
+    let settle = Option.map t.ws ~f:(fun (c : Ws_replay.Config.t) -> c.settle) in
+    let speed =
+      Option.first_some
+        speed
+        (Option.map t.ws ~f:(fun (c : Ws_replay.Config.t) -> c.speed))
+    in
+    Or_error.try_with (fun () -> Ws_replay.Config.create ?stop ?speed ?settle ~start ())
+  | None, Some config ->
+    Or_error.try_with (fun () ->
+      Ws_replay.Config.create
+        ~stop:(Option.value stop ~default:config.stop)
+        ~speed:(Option.value speed ~default:config.speed)
+        ~settle:config.settle
+        ~start:config.start
+        ())
+;;
+
+let handle_ws t ~venue ~config reader writer =
+  let ws = Websocket.create ~opcode:`Text ~role:Server reader writer in
+  let incoming, outgoing = Websocket.pipes ws in
+  let conn_id = sprintf "replay-%d" t.next_conn_id in
+  t.next_conn_id <- t.next_conn_id + 1;
+  let session =
+    Ws_replay.create
+      ~time_source:t.time_source
+      config
+      t.source
+      ~venue
+      ~conn_id
+      ~send:(fun frame -> Pipe.write_if_open outgoing frame)
+  in
+  let%map () =
+    Pipe.iter incoming ~f:(fun message -> Ws_replay.on_message session message)
+  in
+  Ws_replay.close session;
+  Pipe.close outgoing
+;;
+
+let header_is req name value =
+  match Cohttp.Header.get (Cohttp.Request.headers req) name with
+  | Some v ->
+    String.split v ~on:','
+    |> List.exists ~f:(fun v -> String.Caseless.equal (String.strip v) value)
+  | None -> false
+;;
+
+let ws_upgrade t req ~venue =
+  let uri = Cohttp.Request.uri req in
+  match
+    ( Market_data.Venue.of_string_opt venue
+    , Cohttp.Header.get (Cohttp.Request.headers req) "sec-websocket-key" )
+  with
+  | None, _ -> respond_text ~status:`Not_found (sprintf "unknown venue %s\n" venue)
+  | Some venue, _
+    when not (List.mem Venue_protocol.supported venue ~equal:Market_data.Venue.equal) ->
+    respond_text
+      ~status:`Not_found
+      (sprintf "no websocket replay for %s\n" (Market_data.Venue.to_string venue))
+  | Some _, None -> respond_text ~status:`Bad_request "missing Sec-WebSocket-Key\n"
+  | Some venue, Some key ->
+    (match ws_config t uri with
+     | Error error -> respond_text ~status:`Bad_request (Error.to_string_hum error ^ "\n")
+     | Ok config ->
+       let headers =
+         Cohttp.Header.of_list
+           [ "upgrade", "websocket"
+           ; "connection", "Upgrade"
+           ; ( "sec-websocket-accept"
+             , Websocket.sec_websocket_accept_header_value ~sec_websocket_key:key )
+           ]
+       in
+       (* [Http.Response.make], unlike [Cohttp.Response.make], does not add
+          [transfer-encoding: chunked], which is invalid on a 101. *)
+       let response = Http.Response.make ~status:`Switching_protocols ~headers () in
+       return
+         (`Expert
+           (response, fun reader writer -> handle_ws t ~venue ~config reader writer)))
+;;
+
 let handler t ~body:_ _addr req =
   let uri = Cohttp.Request.uri req in
-  match Cohttp.Request.meth req, Uri.path uri with
-  | `GET, "/replay" -> replay_http t uri
-  | _, path -> respond_text ~status:`Not_found (sprintf "no route for %s\n" path)
+  match Cohttp.Request.meth req, String.split (Uri.path uri) ~on:'/' with
+  | `GET, [ ""; "replay" ] -> replay_http t uri
+  | `GET, "" :: "ws" :: venue :: _ when header_is req "upgrade" "websocket" ->
+    ws_upgrade t req ~venue
+  | _, _ -> respond_text ~status:`Not_found (sprintf "no route for %s\n" (Uri.path uri))
 ;;
 
 let start t ~port =
