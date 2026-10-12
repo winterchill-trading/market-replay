@@ -81,3 +81,36 @@ let%expect_test "bitget-feed Live_feed over the replay" =
     |}];
   Cohttp_async.Server.close server
 ;;
+
+let%expect_test "deribit-feed Live_feed over the replay" =
+  let%bind replay, server = start () in
+  let%bind live =
+    Deribit_feed.Live_feed.start
+      (Deribit_feed.Config.create
+         ~url:(url server "/ws/deribit?from=2026-10-12T16:54:00Z")
+         ())
+      ~symbols:[ "BTC-PERPETUAL" ]
+      ~streams:all_streams
+  in
+  let%bind () = summarize (Deribit_feed.Live_feed.feed live) in
+  print_counters replay ~parse_errors:(Deribit_feed.Live_feed.stats live).parse_errors;
+  [%expect
+    {|
+    (trade ((venue Deribit) (symbol BTC-PERPETUAL)) Sell 82542.5 20)
+    (trade ((venue Deribit) (symbol BTC-PERPETUAL)) Sell 82542.5 20)
+    (trade ((venue Deribit) (symbol BTC-PERPETUAL)) Sell 82542.5 20)
+    (bbo 82542.5 82543)
+    (bbo 82542.5 82543)
+    (bbo 82542.5 82543)
+    (l2 Snapshot (bids 1138) (asks 908))
+    (l2 Delta (bids 48) (asks 72))
+    (l2 Delta (bids 61) (asks 61))
+    (funding 9.746E-05 (mark 82541.5))
+    (funding 9.746E-05 (mark 82537.21))
+    (funding 9.746E-05 (mark 82536.97))
+    market_replay_ws_connections_total{venue="deribit"} 4
+    market_replay_ws_replies_total{venue="deribit"} 8
+    (parse_errors 0)
+    |}];
+  Cohttp_async.Server.close server
+;;
