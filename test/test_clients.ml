@@ -14,7 +14,15 @@ let start () =
       ~start:(Raw_line.parse_time "2026-10-12T13:35:00Z" |> ok_exn)
       ()
   in
-  Server.start (Server.create ~ws (Source.of_data_dir "fixtures")) ~port:0
+  let replay = Server.create ~ws (Source.of_data_dir "fixtures") in
+  let%map server = Server.start replay ~port:0 in
+  replay, server
+;;
+
+let print_ws_metrics replay =
+  String.split_lines (Metrics.render (Server.metrics replay))
+  |> List.filter ~f:(String.is_prefix ~prefix:"market_replay_ws_")
+  |> List.iter ~f:print_endline
 ;;
 
 let url server path =
@@ -75,7 +83,7 @@ let summarize (feed : Market_data.Feed.t) =
 ;;
 
 let%expect_test "hl-client Live_feed over the replay" =
-  let%bind server = start () in
+  let%bind replay, server = start () in
   let%bind feed =
     Hl_client.Live_feed.create
       (Hl_client.Config.create
@@ -86,6 +94,8 @@ let%expect_test "hl-client Live_feed over the replay" =
       ~streams:[ Trades; Bbo; L2; Funding ]
   in
   let%bind () = summarize feed in
+  let%bind () = Clock_ns.after (Time_ns.Span.of_int_ms 100) in
+  print_ws_metrics replay;
   [%expect
     {|
     (trade ((venue Hyperliquid) (symbol BTC)) Sell 82525 0.01671)
@@ -100,12 +110,17 @@ let%expect_test "hl-client Live_feed over the replay" =
     (funding 8.8036E-06 (mark 82528))
     (funding 8.8233E-06 (mark 82521))
     (funding 8.8233E-06 (mark 82521))
+    market_replay_ws_connections_total{venue="hyperliquid"} 1
+    market_replay_ws_clients{venue="hyperliquid"} 0
+    market_replay_ws_frames_total{venue="hyperliquid"} 43
+    market_replay_ws_replies_total{venue="hyperliquid"} 3
+    market_replay_ws_gaps_skipped_total{venue="hyperliquid"} 0
     |}];
   Cohttp_async.Server.close server
 ;;
 
 let%expect_test "bybit-client Live_feed over the replay" =
-  let%bind server = start () in
+  let%bind _replay, server = start () in
   let%bind feed =
     Bybit_client.Live_feed.connect
       (Bybit_client.Config.Read_only.create
@@ -135,7 +150,7 @@ let%expect_test "bybit-client Live_feed over the replay" =
 ;;
 
 let%expect_test "binance-client Live_feed over the replay" =
-  let%bind server = start () in
+  let%bind _replay, server = start () in
   let%bind feed =
     Binance_client.Live_feed.create
       (Binance_client.Config.Read_only.create
