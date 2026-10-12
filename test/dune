@@ -11,6 +11,13 @@
   cohttp-async
   uri
   market-data
+  binance-protocol
+  bybit-protocol
+  hl-protocol
+  binance-client
+  bybit-client
+  hl-client
+  yojson
   market-replay)
  (preprocess
   (pps ppx_jane)))
