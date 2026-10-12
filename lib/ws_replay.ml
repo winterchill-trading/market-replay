@@ -47,7 +47,7 @@ type t =
   { config : Config.t
   ; source : Source.t
   ; venue : Market_data.Venue.t
-  ; conn_id : string
+  ; session : Venue_protocol.Session.t
   ; send : string -> unit Deferred.t
   ; time_source : Time_source.t
   ; on_frame : Source.Item.t -> unit
@@ -148,7 +148,7 @@ let emit t (item : Source.Item.t) =
     then (
       t.frames_sent <- t.frames_sent + 1;
       Option.iter t.metrics ~f:(fun m -> Metrics.ws_frame m t.venue);
-      t.send frame)
+      t.send (Venue_protocol.Session.outgoing t.session frame))
     else return ()
 ;;
 
@@ -230,7 +230,7 @@ let create
   { config
   ; source
   ; venue
-  ; conn_id
+  ; session = Venue_protocol.Session.create venue ~conn_id
   ; send
   ; time_source = Time_source.read_only time_source
   ; on_frame
@@ -253,14 +253,14 @@ let reply t replies =
   Deferred.List.iter replies ~how:`Sequential ~f:(fun r ->
     t.replies_sent <- t.replies_sent + 1;
     Option.iter t.metrics ~f:(fun m -> Metrics.ws_reply m t.venue);
-    t.send r)
+    t.send (Venue_protocol.Session.outgoing t.session r))
 ;;
 
 let on_message t message =
   if t.closed
   then return ()
   else (
-    match Venue_protocol.on_message t.venue ~conn_id:t.conn_id message with
+    match Venue_protocol.Session.on_message t.session ~now:(position t) message with
     | Ignore -> return ()
     | Reply replies -> reply t replies
     | Unsubscribe { series; replies } ->

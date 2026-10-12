@@ -50,8 +50,23 @@ end
 (** The venues served over websockets: Binance, Bybit and Hyperliquid. *)
 val supported : Market_data.Venue.t list
 
-(** [conn_id] names the connection where the venue echoes one (Bybit). Malformed messages
-    become an error reply in the venue's shape, or [Ignore]. *)
+(** One client connection. Venues whose replies depend on what the connection did before
+    (Coinbase numbers every frame of a connection) keep that state here. *)
+module Session : sig
+  type t
+
+  (** [conn_id] names the connection where the venue echoes one (Bybit, OKX). *)
+  val create : Market_data.Venue.t -> conn_id:string -> t
+
+  (** Parses a client message. [now] is the replay position, for replies that carry a
+      time. Malformed messages become an error reply in the venue's shape, or [Ignore]. *)
+  val on_message : t -> now:Time_ns.t -> string -> Action.t
+
+  (** The text to send for a reply or a recorded data frame on this connection. *)
+  val outgoing : t -> string -> string
+end
+
+(** [on_message] of a fresh {!Session} at [Time_ns.epoch]. *)
 val on_message : Market_data.Venue.t -> conn_id:string -> string -> Action.t
 
 (** Whether a recorded frame of this venue is data to pass on, rather than an

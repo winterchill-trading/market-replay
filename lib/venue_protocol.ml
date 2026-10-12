@@ -217,12 +217,27 @@ module Hyperliquid = struct
   ;;
 end
 
-let on_message (venue : Venue.t) ~conn_id message : Action.t =
-  match venue with
-  | Binance -> Binance.on_message message
-  | Bybit -> Bybit.on_message ~conn_id message
-  | Hyperliquid -> Hyperliquid.on_message message
-  | Okx | Coinbase | Kraken | Deribit | Bitget | Nyse | Cboe | Cme -> Ignore
+module Session = struct
+  type t =
+    { venue : Venue.t
+    ; conn_id : string
+    }
+
+  let create venue ~conn_id = { venue; conn_id }
+
+  let on_message t ~now:_ message : Action.t =
+    match t.venue with
+    | Binance -> Binance.on_message message
+    | Bybit -> Bybit.on_message ~conn_id:t.conn_id message
+    | Hyperliquid -> Hyperliquid.on_message message
+    | Okx | Coinbase | Kraken | Deribit | Bitget | Nyse | Cboe | Cme -> Ignore
+  ;;
+
+  let outgoing _ frame = frame
+end
+
+let on_message venue ~conn_id message =
+  Session.on_message (Session.create venue ~conn_id) ~now:Time_ns.epoch message
 ;;
 
 let is_data (venue : Venue.t) frame =
