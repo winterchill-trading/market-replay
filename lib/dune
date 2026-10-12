@@ -1,0 +1,19 @@
+(library
+ (name market_replay)
+ (public_name market-replay)
+ (libraries
+  core
+  async
+  async_websocket
+  cohttp
+  cohttp-async
+  http
+  market-data
+  hl-protocol
+  binance-protocol
+  bybit-protocol
+  ppx_yojson_conv_lib
+  yojson
+  uri)
+ (preprocess
+  (pps ppx_jane)))
