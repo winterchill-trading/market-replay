@@ -30,7 +30,7 @@ module Action = struct
   [@@deriving sexp_of]
 end
 
-let supported = [ Venue.Binance; Bybit; Hyperliquid; Okx; Bitget ]
+let supported = [ Venue.Binance; Bybit; Hyperliquid; Okx; Bitget; Deribit ]
 let json = Yojson.Safe.to_string
 
 let parse decode message =
@@ -339,6 +339,72 @@ module Bitget = struct
   ;;
 end
 
+module Deribit = struct
+  (* [trades.BTC-PERPETUAL.100ms], [quote.BTC-PERPETUAL], [book.BTC-PERPETUAL.100ms] or
+     [book.BTC-PERPETUAL.none.10.100ms], [ticker.BTC-PERPETUAL.100ms]. *)
+  let series_of channel : Series.t list =
+    match String.split channel ~on:'.' with
+    | kind :: symbol :: _ ->
+      let one stream = [ { Series.stream; symbol } ] in
+      (match kind with
+       | "trades" -> one Trades
+       | "quote" -> one Bbo
+       | "book" -> one L2
+       | "ticker" -> one Funding
+       | _ -> [])
+    | _ -> []
+  ;;
+
+  let us time =
+    `Intlit Int63.(to_string (Time_ns.to_int63_ns_since_epoch time / of_int 1000))
+  ;;
+
+  let response ~now ~id body =
+    json
+      (`Assoc
+        ([ "jsonrpc", `String "2.0"; "id", id ]
+         @ body
+         @ [ "usIn", us now; "usOut", us now; "usDiff", `Int 0; "testnet", `Bool false ]))
+  ;;
+
+  let error ~now ~id ~code message =
+    response
+      ~now
+      ~id
+      [ "error", `Assoc [ "code", `Int code; "message", `String message ] ]
+  ;;
+
+  let on_message ~now message : Action.t =
+    match Yojson.Safe.from_string message with
+    | exception _ -> Reply [ error ~now ~id:`Null ~code:(-32700) "parse_error" ]
+    | request ->
+      let id = Option.value (field "id" request) ~default:`Null in
+      let channels () =
+        Option.value_map (field "params" request) ~default:[] ~f:(list_field "channels")
+        |> List.filter_map ~f:(function
+          | `String c -> Some c
+          | _ -> None)
+      in
+      let result value = response ~now ~id [ "result", value ] in
+      (match string_field "method" request with
+       | Some (("public/subscribe" | "public/unsubscribe") as method_) ->
+         let channels = channels () in
+         let series = List.concat_map channels ~f:series_of in
+         let replies = [ result (`List (List.map channels ~f:(fun c -> `String c))) ] in
+         if String.equal method_ "public/subscribe"
+         then Subscribe { series; replies }
+         else Unsubscribe { series; replies }
+       | Some ("public/set_heartbeat" | "public/disable_heartbeat") ->
+         Reply [ result (`String "ok") ]
+       | Some "public/test" ->
+         Reply [ result (`Assoc [ "version", `String "market-replay" ]) ]
+       | Some _ | None -> Reply [ error ~now ~id ~code:(-32601) "Method not found" ])
+  ;;
+
+  (* Notifications; responses, heartbeats and test requests are not passed on. *)
+  let is_data frame = has_substring frame {|"method":"subscription"|}
+end
+
 module Session = struct
   type t =
     { venue : Venue.t
@@ -347,14 +413,15 @@ module Session = struct
 
   let create venue ~conn_id = { venue; conn_id }
 
-  let on_message t ~now:_ message : Action.t =
+  let on_message t ~now message : Action.t =
     match t.venue with
     | Binance -> Binance.on_message message
     | Bybit -> Bybit.on_message ~conn_id:t.conn_id message
     | Hyperliquid -> Hyperliquid.on_message message
     | Okx -> Okx.on_message ~conn_id:t.conn_id message
     | Bitget -> Bitget.on_message message
-    | Coinbase | Kraken | Deribit | Nyse | Cboe | Cme -> Ignore
+    | Deribit -> Deribit.on_message ~now message
+    | Coinbase | Kraken | Nyse | Cboe | Cme -> Ignore
   ;;
 
   let outgoing _ frame = frame
@@ -371,5 +438,6 @@ let is_data (venue : Venue.t) frame =
   | Hyperliquid -> Hyperliquid.is_data frame
   | Okx -> Okx.is_data frame
   | Bitget -> Bitget.is_data frame
-  | Coinbase | Kraken | Deribit | Nyse | Cboe | Cme -> true
+  | Deribit -> Deribit.is_data frame
+  | Coinbase | Kraken | Nyse | Cboe | Cme -> true
 ;;

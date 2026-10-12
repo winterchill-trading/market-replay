@@ -23,6 +23,11 @@
     - Bitget v2 public ([/ws/bitget]): the same [op]/[args] shape and [ping]/[pong] as
       OKX, acks without a connection id. [trade] is [Trades], [books1] [Bbo], [books],
       [books5] and [books15] [L2], [ticker] [Funding].
+    - Deribit JSON-RPC ([/ws/deribit]): [public/subscribe] and [public/unsubscribe] are
+      answered with the channel list, [public/set_heartbeat] with [ok], [public/test] with
+      a version; other methods get a JSON-RPC error. [trades.<s>...] is [Trades],
+      [quote.<s>] [Bbo], [book.<s>...] [L2], [ticker.<s>...] [Funding]. Only
+      [subscription] notifications are passed on.
 
     Other venues are refused. Symbols are returned as the recorder spells them in its
     directories (Binance and Bybit uppercase). *)

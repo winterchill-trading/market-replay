@@ -172,6 +172,35 @@ let%expect_test "bitget-feed subscriptions" =
     |}]
 ;;
 
+let%expect_test "deribit-feed subscriptions" =
+  let config = Deribit_feed.Config.create () in
+  show
+    Deribit
+    (Deribit_feed.Wire.subscribe
+       ~id:2
+       (List.map streams ~f:(fun stream ->
+          Deribit_feed.Live_feed.channel config stream "BTC-PERPETUAL")));
+  show Deribit (Deribit_feed.Wire.set_heartbeat ~id:1 ~seconds:30);
+  show Deribit (Deribit_feed.Wire.test ~id:0);
+  show Deribit {|{"jsonrpc":"2.0","id":9,"method":"private/buy","params":{}}|};
+  [%expect
+    {|
+    (Subscribe
+     (series
+      (((stream Trades) (symbol BTC-PERPETUAL))
+       ((stream Bbo) (symbol BTC-PERPETUAL)) ((stream L2) (symbol BTC-PERPETUAL))
+       ((stream Funding) (symbol BTC-PERPETUAL))))
+     (replies
+      ("{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":[\"trades.BTC-PERPETUAL.100ms\",\"quote.BTC-PERPETUAL\",\"book.BTC-PERPETUAL.100ms\",\"ticker.BTC-PERPETUAL.100ms\"],\"usIn\":0,\"usOut\":0,\"usDiff\":0,\"testnet\":false}")))
+    (Reply
+     ("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"ok\",\"usIn\":0,\"usOut\":0,\"usDiff\":0,\"testnet\":false}"))
+    (Reply
+     ("{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"version\":\"market-replay\"},\"usIn\":0,\"usOut\":0,\"usDiff\":0,\"testnet\":false}"))
+    (Reply
+     ("{\"jsonrpc\":\"2.0\",\"id\":9,\"error\":{\"code\":-32601,\"message\":\"Method not found\"},\"usIn\":0,\"usOut\":0,\"usDiff\":0,\"testnet\":false}"))
+    |}]
+;;
+
 let%expect_test "is_data" =
   List.iter
     [ Market_data.Venue.Binance, {|{"stream":"btcusdt@aggTrade","data":{}}|}
@@ -188,6 +217,9 @@ let%expect_test "is_data" =
     ; Bitget, {|{"action":"snapshot","arg":{"channel":"trade"},"data":[]}|}
     ; Bitget, {|{"event":"subscribe","arg":{"channel":"trade"}}|}
     ; Bitget, "pong"
+    ; Deribit, {|{"jsonrpc":"2.0","method":"subscription","params":{"channel":"x"}}|}
+    ; Deribit, {|{"jsonrpc":"2.0","method":"heartbeat","params":{"type":"test_request"}}|}
+    ; Deribit, {|{"jsonrpc":"2.0","id":3,"result":"ok"}|}
     ]
     ~f:(fun (venue, frame) -> printf "%b %s\n" (Venue_protocol.is_data venue frame) frame);
   [%expect
@@ -206,5 +238,8 @@ let%expect_test "is_data" =
     true {"action":"snapshot","arg":{"channel":"trade"},"data":[]}
     false {"event":"subscribe","arg":{"channel":"trade"}}
     false pong
+    true {"jsonrpc":"2.0","method":"subscription","params":{"channel":"x"}}
+    false {"jsonrpc":"2.0","method":"heartbeat","params":{"type":"test_request"}}
+    false {"jsonrpc":"2.0","id":3,"result":"ok"}
     |}]
 ;;
