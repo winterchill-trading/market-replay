@@ -43,11 +43,15 @@ end
 type t
 
 (** [send] writes one text frame to the client; its deferred is the pushback. [metrics]
-    counts frames, replies and skipped gaps under [venue]. *)
+    counts frames, replies and skipped gaps under [venue]. [on_frame] sees every item
+    replayed, sent or not; the replay then waits for [hold item] before the next one (the
+    server holds a speed 0 Binance replay at a recorded depth snapshot until the client
+    has fetched it). *)
 val create
   :  ?metrics:Metrics.t
   -> ?time_source:Time_source.t
   -> ?on_frame:(Source.Item.t -> unit)
+  -> ?hold:(Source.Item.t -> unit Deferred.t)
   -> Config.t
   -> Source.t
   -> venue:Market_data.Venue.t

@@ -51,6 +51,7 @@ type t =
   ; send : string -> unit Deferred.t
   ; time_source : Time_source.t
   ; on_frame : Source.Item.t -> unit
+  ; hold : (Source.Item.t -> unit Deferred.t) option
   ; metrics : Metrics.t option
   ; mutable subscribed : Series.Set.t
   ; mutable readers : Reader.t list
@@ -172,6 +173,11 @@ let rec loop t =
          | None ->
            reader.head <- None;
            let%bind () = emit t item in
+           let%bind () =
+             match t.hold with
+             | None -> return ()
+             | Some hold -> hold item
+           in
            loop t
          | Some at ->
            (* A subscription made while waiting can bring an earlier frame. *)
@@ -224,6 +230,7 @@ let create
   ?metrics
   ?(time_source = Time_source.wall_clock ())
   ?(on_frame = ignore)
+  ?hold
   (config : Config.t)
   source
   ~venue
@@ -237,6 +244,7 @@ let create
   ; send
   ; time_source = Time_source.read_only time_source
   ; on_frame
+  ; hold
   ; metrics
   ; subscribed = Series.Set.empty
   ; readers = []

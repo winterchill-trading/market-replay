@@ -166,3 +166,41 @@ let%expect_test "a request naming one series twice replays it once" =
     |}];
   return ()
 ;;
+
+let%expect_test "hold pauses the replay after an item" =
+  let release = Ivar.create () in
+  let hold item =
+    match (item : Source.Item.t) with
+    | Frame { frame; _ } when String.is_substring frame ~substring:"BTC+0" ->
+      print_endline "holding";
+      Ivar.read release
+    | _ -> return ()
+  in
+  let session =
+    Ws_replay.create
+      ~hold
+      (Ws_replay.Config.create ~speed:0. ~settle:Time_ns.Span.zero ~start ())
+      source
+      ~venue:Hyperliquid
+      ~conn_id:"c"
+      ~send:(fun frame ->
+        print_endline frame;
+        return ())
+  in
+  let%bind () = Ws_replay.on_message session (subscribe "BTC") in
+  let%bind () = Clock_ns.after (Time_ns.Span.of_int_ms 20) in
+  print_endline "released";
+  Ivar.fill_exn release ();
+  let%bind () = Ws_replay.finished session in
+  Ws_replay.close session;
+  [%expect
+    {|
+    {"channel":"subscriptionResponse","data":{"method":"subscribe","subscription":{"type":"trades","coin":"BTC"}}}
+    {"channel":"trades","data":"BTC+0"}
+    holding
+    released
+    {"channel":"trades","data":"BTC+1000"}
+    {"channel":"trades","data":"BTC+3000"}
+    |}];
+  return ()
+;;
