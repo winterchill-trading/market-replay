@@ -30,7 +30,10 @@ module Action = struct
   [@@deriving sexp_of]
 end
 
-let supported = [ Venue.Binance; Bybit; Hyperliquid; Okx; Bitget; Deribit; Kraken ]
+let supported =
+  [ Venue.Binance; Bybit; Hyperliquid; Okx; Bitget; Deribit; Kraken; Coinbase ]
+;;
+
 let json = Yojson.Safe.to_string
 
 let parse decode message =
@@ -535,13 +538,127 @@ module Kraken = struct
   ;;
 end
 
+module Coinbase = struct
+  (* What a connection is subscribed to, echoed in every [subscriptions] reply, and the
+     next [sequence_num]: Coinbase numbers every frame of a connection, so recorded
+     numbers are replaced. *)
+  type t =
+    { mutable subscriptions : String.Set.t String.Map.t
+    ; mutable sequence : int
+    }
+
+  let create () = { subscriptions = String.Map.empty; sequence = 0 }
+
+  let series_of ~channel symbol : Series.t list =
+    let one stream = [ { Series.stream; symbol } ] in
+    match channel with
+    | "market_trades" -> one Trades
+    | "ticker" | "ticker_batch" -> one Bbo
+    | "level2" | "l2_data" -> one L2
+    | _ -> []
+  ;;
+
+  let error message =
+    json (`Assoc [ "type", `String "error"; "message", `String message ])
+  ;;
+
+  let subscriptions t ~now =
+    json
+      (`Assoc
+        [ "channel", `String "subscriptions"
+        ; "client_id", `String ""
+        ; ( "timestamp"
+          , `String (Time_ns.to_string_iso8601_basic now ~zone:Time_float.Zone.utc) )
+        ; "sequence_num", `Int 0
+        ; ( "events"
+          , `List
+              [ `Assoc
+                  [ ( "subscriptions"
+                    , `Assoc
+                        (Map.to_alist t.subscriptions
+                         |> List.map ~f:(fun (channel, ids) ->
+                           ( channel
+                           , `List (Set.to_list ids |> List.map ~f:(fun s -> `String s)) ))
+                        ) )
+                  ]
+              ] )
+        ])
+  ;;
+
+  let on_message t ~now message : Action.t =
+    match Yojson.Safe.from_string message with
+    | exception _ -> Reply [ error "malformed request" ]
+    | request ->
+      let product_ids =
+        list_field "product_ids" request
+        |> List.filter_map ~f:(function
+          | `String s -> Some s
+          | _ -> None)
+      in
+      (match string_field "type" request, string_field "channel" request with
+       | Some (("subscribe" | "unsubscribe") as type_), Some channel ->
+         let ids =
+           String.Set.of_list
+             (if String.equal channel "heartbeats" then [ channel ] else product_ids)
+         in
+         let current =
+           Map.find t.subscriptions channel |> Option.value ~default:String.Set.empty
+         in
+         let updated =
+           if String.equal type_ "subscribe"
+           then Set.union current ids
+           else Set.diff current ids
+         in
+         t.subscriptions
+         <- (if Set.is_empty updated
+             then Map.remove t.subscriptions channel
+             else Map.set t.subscriptions ~key:channel ~data:updated);
+         let series = List.concat_map product_ids ~f:(series_of ~channel) in
+         let replies = [ subscriptions t ~now ] in
+         if String.equal type_ "subscribe"
+         then Subscribe { series; replies }
+         else Unsubscribe { series; replies }
+       | _ -> Reply [ error "Failed to subscribe" ])
+  ;;
+
+  let sequence_key = {|"sequence_num":|}
+
+  (* Replaces the number after the first [sequence_num]. *)
+  let outgoing t frame =
+    match String.substr_index frame ~pattern:sequence_key with
+    | None -> frame
+    | Some i ->
+      let start = i + String.length sequence_key in
+      let stop =
+        String.lfindi frame ~pos:start ~f:(fun _ c -> not (Char.is_digit c))
+        |> Option.value ~default:(String.length frame)
+      in
+      let sequence = t.sequence in
+      t.sequence <- sequence + 1;
+      String.concat
+        [ String.prefix frame start
+        ; Int.to_string sequence
+        ; String.drop_prefix frame stop
+        ]
+  ;;
+
+  (* Recorded [subscriptions] replies and [heartbeats] are not passed on. *)
+  let is_data frame =
+    String.is_prefix frame ~prefix:{|{"channel":"|}
+    && not
+         (String.is_prefix frame ~prefix:{|{"channel":"subscriptions"|}
+          || String.is_prefix frame ~prefix:{|{"channel":"heartbeats"|})
+  ;;
+end
+
 module Session = struct
   type t =
     { venue : Venue.t
     ; conn_id : string
+    ; coinbase : Coinbase.t
     }
 
-  let create venue ~conn_id = { venue; conn_id }
+  let create venue ~conn_id = { venue; conn_id; coinbase = Coinbase.create () }
 
   let on_message t ~now message : Action.t =
     match t.venue with
@@ -552,10 +669,15 @@ module Session = struct
     | Bitget -> Bitget.on_message message
     | Deribit -> Deribit.on_message ~now message
     | Kraken -> Kraken.on_message ~now message
-    | Coinbase | Nyse | Cboe | Cme -> Ignore
+    | Coinbase -> Coinbase.on_message t.coinbase ~now message
+    | Nyse | Cboe | Cme -> Ignore
   ;;
 
-  let outgoing _ frame = frame
+  let outgoing t frame =
+    match t.venue with
+    | Coinbase -> Coinbase.outgoing t.coinbase frame
+    | _ -> frame
+  ;;
 end
 
 let on_message venue ~conn_id message =
@@ -571,5 +693,6 @@ let is_data (venue : Venue.t) frame =
   | Bitget -> Bitget.is_data frame
   | Deribit -> Deribit.is_data frame
   | Kraken -> Kraken.is_data frame
-  | Coinbase | Nyse | Cboe | Cme -> true
+  | Coinbase -> Coinbase.is_data frame
+  | Nyse | Cboe | Cme -> true
 ;;

@@ -35,6 +35,13 @@
       [{"event": "subscribe", "feed": "ticker", "product_ids": [...]}] is answered with
       [subscribed]; [ticker] is [Funding]. Heartbeats, status frames, acks and pongs are
       not passed on.
+    - Coinbase Advanced Trade ([/ws/coinbase]):
+      [{"type": "subscribe", "product_ids": [...], "channel": ...}] is answered with a
+      [subscriptions] frame listing everything the connection is subscribed to.
+      [market_trades] is [Trades], [ticker] [Bbo], [level2] [L2]; [heartbeats] is
+      acknowledged only. Recorded [subscriptions] and [heartbeats] frames are not passed
+      on, and every frame sent gets the connection's own [sequence_num] (0, 1, ...), as
+      Coinbase numbers frames per connection and its clients resync on a gap.
 
     Other venues are refused. Symbols are returned as the recorder spells them in its
     directories (Binance and Bybit uppercase). *)

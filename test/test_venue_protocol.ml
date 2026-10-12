@@ -239,6 +239,50 @@ let%expect_test "kraken-feed subscriptions" =
     |}]
 ;;
 
+let%expect_test "coinbase-feed subscriptions, numbered per connection" =
+  let session = Venue_protocol.Session.create Coinbase ~conn_id:"c1" in
+  let now = Raw_line.parse_time "2026-10-12T16:54:00Z" |> ok_exn in
+  let send message =
+    print_s
+      [%sexp
+        (Venue_protocol.Session.on_message session ~now message : Venue_protocol.Action.t)]
+  in
+  List.iter streams ~f:(fun stream ->
+    Option.iter (Coinbase_feed.Live_feed.channel stream) ~f:(fun channel ->
+      send (Coinbase_feed.Wire.subscribe ~channel ~product_ids:[ "BTC-USD" ])));
+  send (Coinbase_feed.Wire.subscribe ~channel:"heartbeats" ~product_ids:[]);
+  send (Coinbase_feed.Wire.unsubscribe ~channel:"level2" ~product_ids:[ "BTC-USD" ]);
+  send {|{"type":"subscribe"}|};
+  List.iter
+    [ {|{"channel":"l2_data","timestamp":"t","sequence_num":57,"events":[]}|}
+    ; {|{"channel":"ticker","timestamp":"t","sequence_num":3,"events":[]}|}
+    ; {|{"type":"error","message":"x"}|}
+    ]
+    ~f:(fun frame -> print_endline (Venue_protocol.Session.outgoing session frame));
+  [%expect
+    {|
+    (Subscribe (series (((stream Trades) (symbol BTC-USD))))
+     (replies
+      ("{\"channel\":\"subscriptions\",\"client_id\":\"\",\"timestamp\":\"2026-10-12T16:54:00.000000000Z\",\"sequence_num\":0,\"events\":[{\"subscriptions\":{\"market_trades\":[\"BTC-USD\"]}}]}")))
+    (Subscribe (series (((stream Bbo) (symbol BTC-USD))))
+     (replies
+      ("{\"channel\":\"subscriptions\",\"client_id\":\"\",\"timestamp\":\"2026-10-12T16:54:00.000000000Z\",\"sequence_num\":0,\"events\":[{\"subscriptions\":{\"market_trades\":[\"BTC-USD\"],\"ticker\":[\"BTC-USD\"]}}]}")))
+    (Subscribe (series (((stream L2) (symbol BTC-USD))))
+     (replies
+      ("{\"channel\":\"subscriptions\",\"client_id\":\"\",\"timestamp\":\"2026-10-12T16:54:00.000000000Z\",\"sequence_num\":0,\"events\":[{\"subscriptions\":{\"level2\":[\"BTC-USD\"],\"market_trades\":[\"BTC-USD\"],\"ticker\":[\"BTC-USD\"]}}]}")))
+    (Subscribe (series ())
+     (replies
+      ("{\"channel\":\"subscriptions\",\"client_id\":\"\",\"timestamp\":\"2026-10-12T16:54:00.000000000Z\",\"sequence_num\":0,\"events\":[{\"subscriptions\":{\"heartbeats\":[\"heartbeats\"],\"level2\":[\"BTC-USD\"],\"market_trades\":[\"BTC-USD\"],\"ticker\":[\"BTC-USD\"]}}]}")))
+    (Unsubscribe (series (((stream L2) (symbol BTC-USD))))
+     (replies
+      ("{\"channel\":\"subscriptions\",\"client_id\":\"\",\"timestamp\":\"2026-10-12T16:54:00.000000000Z\",\"sequence_num\":0,\"events\":[{\"subscriptions\":{\"heartbeats\":[\"heartbeats\"],\"market_trades\":[\"BTC-USD\"],\"ticker\":[\"BTC-USD\"]}}]}")))
+    (Reply ("{\"type\":\"error\",\"message\":\"Failed to subscribe\"}"))
+    {"channel":"l2_data","timestamp":"t","sequence_num":0,"events":[]}
+    {"channel":"ticker","timestamp":"t","sequence_num":1,"events":[]}
+    {"type":"error","message":"x"}
+    |}]
+;;
+
 let%expect_test "is_data" =
   List.iter
     [ Market_data.Venue.Binance, {|{"stream":"btcusdt@aggTrade","data":{}}|}
@@ -264,6 +308,11 @@ let%expect_test "is_data" =
     ; Kraken, {|{"method":"subscribe","result":{"channel":"trade"},"success":true}|}
     ; Kraken, {|{"time":1,"product_id":"PF_XBTUSD","feed":"ticker"}|}
     ; Kraken, {|{"event":"subscribed","feed":"ticker","product_ids":["PF_XBTUSD"]}|}
+    ; ( Coinbase
+      , {|{"channel":"market_trades","timestamp":"t","sequence_num":3,"events":[]}|} )
+    ; ( Coinbase
+      , {|{"channel":"subscriptions","timestamp":"t","sequence_num":1,"events":[]}|} )
+    ; Coinbase, {|{"channel":"heartbeats","timestamp":"t","sequence_num":2,"events":[]}|}
     ]
     ~f:(fun (venue, frame) -> printf "%b %s\n" (Venue_protocol.is_data venue frame) frame);
   [%expect
@@ -291,5 +340,8 @@ let%expect_test "is_data" =
     false {"method":"subscribe","result":{"channel":"trade"},"success":true}
     true {"time":1,"product_id":"PF_XBTUSD","feed":"ticker"}
     false {"event":"subscribed","feed":"ticker","product_ids":["PF_XBTUSD"]}
+    true {"channel":"market_trades","timestamp":"t","sequence_num":3,"events":[]}
+    false {"channel":"subscriptions","timestamp":"t","sequence_num":1,"events":[]}
+    false {"channel":"heartbeats","timestamp":"t","sequence_num":2,"events":[]}
     |}]
 ;;
