@@ -149,3 +149,33 @@ let%expect_test "kraken-feed Live_feed over the replay, spot and futures" =
     |}];
   Cohttp_async.Server.close server
 ;;
+
+let%expect_test "coinbase-feed Live_feed over the replay" =
+  let%bind replay, server = start () in
+  let%bind live =
+    Coinbase_feed.Live_feed.start
+      (Coinbase_feed.Config.create
+         ~url:(url server "/ws/coinbase?from=2026-10-12T16:54:00Z")
+         ())
+      ~symbols:[ "BTC-USD" ]
+      ~streams:all_streams
+  in
+  let%bind () = summarize (Coinbase_feed.Live_feed.feed live) in
+  print_counters replay ~parse_errors:(Coinbase_feed.Live_feed.stats live).parse_errors;
+  [%expect
+    {|
+    (trade ((venue Coinbase) (symbol BTC-USD)) Sell 82529.77 0.00096586)
+    (trade ((venue Coinbase) (symbol BTC-USD)) Sell 82529.77 0.00000011)
+    (trade ((venue Coinbase) (symbol BTC-USD)) Buy 82529.78 0.00011995)
+    (bbo 82517.03 82517.04)
+    (bbo 82517.03 82517.04)
+    (bbo 82517.03 82517.04)
+    (l2 Snapshot (bids 50) (asks 50))
+    (l2 Delta (bids 6) (asks 1))
+    (l2 Delta (bids 7) (asks 5))
+    market_replay_ws_connections_total{venue="coinbase"} 3
+    market_replay_ws_replies_total{venue="coinbase"} 6
+    (parse_errors 0)
+    |}];
+  Cohttp_async.Server.close server
+;;
