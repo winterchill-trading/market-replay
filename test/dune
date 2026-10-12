@@ -1,6 +1,8 @@
 (library
  (name market_replay_test)
  (inline_tests
+  (deps
+   (source_tree fixtures))
   (flags
    (:standard -source-tree-root .)))
  (libraries
