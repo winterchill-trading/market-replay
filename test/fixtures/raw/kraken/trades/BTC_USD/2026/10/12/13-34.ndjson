@@ -1,0 +1,8 @@
+2026-10-12T13:34:55.776778Z {"channel":"status","type":"update","data":[{"version":"2.0.10","system":"online","api_version":"v2","connection_id":10789251518452932375,"upcoming_maintenance":[{"affected_services":["futures_rest","futures_ws"],"cancel_before_utc":"2026-10-13T06:55:00.000000Z","event_id":38,"expected_end_utc":"2026-10-13T07:15:00.000000Z","expected_start_utc":"2026-10-13T07:00:00.000000Z","order_submission":"allowed","phase":"reminder_24h","recommended_action":"continue","source_url":"https://stspg.io/gnvxwt5nx1xy","time_to_start_s":62704,"title":"Derivatives Platform Maintenance"}],"emergency":[]}]}
+2026-10-12T13:34:55.928393Z {"method":"subscribe","result":{"channel":"trade","snapshot":false,"symbol":"BTC/USD"},"success":true,"time_in":"2026-10-12T13:34:55.918748Z","time_out":"2026-10-12T13:34:55.918790Z"}
+2026-10-12T13:34:56.130017Z {"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"sell","price":82471.1,"qty":0.00002396,"ord_type":"limit","trade_id":111088026,"timestamp":"2026-10-12T13:34:56.207110Z"}]}
+2026-10-12T13:34:56.572237Z {"channel":"heartbeat"}
+2026-10-12T13:34:56.636551Z {"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"sell","price":82471.1,"qty":0.00001806,"ord_type":"limit","trade_id":111088027,"timestamp":"2026-10-12T13:34:56.707955Z"}]}
+2026-10-12T13:34:57.560263Z {"channel":"heartbeat"}
+2026-10-12T13:34:58.579190Z {"channel":"heartbeat"}
+2026-10-12T13:34:59.566591Z {"channel":"heartbeat"}

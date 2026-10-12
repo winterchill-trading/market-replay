@@ -114,3 +114,38 @@ let%expect_test "deribit-feed Live_feed over the replay" =
     |}];
   Cohttp_async.Server.close server
 ;;
+
+let%expect_test "kraken-feed Live_feed over the replay, spot and futures" =
+  let%bind replay, server = start () in
+  let from = "?from=2026-10-12T13:34:00Z" in
+  let%bind live =
+    Kraken_feed.Live_feed.start
+      (Kraken_feed.Config.create
+         ~spot_url:(url server ("/ws/kraken" ^ from))
+         ~futures_url:(url server ("/ws/kraken" ^ from))
+         ())
+      ~symbols:[ "BTC/USD" ]
+      ~streams:all_streams
+  in
+  let%bind () = summarize (Kraken_feed.Live_feed.feed live) in
+  print_counters replay ~parse_errors:(Kraken_feed.Live_feed.stats live).parse_errors;
+  [%expect
+    {|
+    (trade ((venue Kraken) (symbol BTC/USD)) Sell 82471.1 0.00002396)
+    (trade ((venue Kraken) (symbol BTC/USD)) Sell 82471.1 0.00001806)
+    (trade ((venue Kraken) (symbol BTC/USD)) Buy 82471.2 0.00014134)
+    (bbo 82471.1 82471.2)
+    (bbo 82471.1 82471.2)
+    (bbo 82471.1 82471.2)
+    (l2 Snapshot (bids 10) (asks 10))
+    (l2 Delta (bids 2) (asks 0))
+    (l2 Delta (bids 2) (asks 0))
+    (funding 2.49745833333E-07 (mark 82475.05034106))
+    (funding 2.49745833333E-07 (mark 82473.26870615))
+    (funding 2.49745833333E-07 (mark 82471.93556382))
+    market_replay_ws_connections_total{venue="kraken"} 4
+    market_replay_ws_replies_total{venue="kraken"} 4
+    (parse_errors 0)
+    |}];
+  Cohttp_async.Server.close server
+;;
