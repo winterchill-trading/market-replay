@@ -126,3 +126,43 @@ let%expect_test "speed 0 sends everything at once" =
     |}];
   return ()
 ;;
+
+let%expect_test "a request naming one series twice replays it once" =
+  let source =
+    Source.of_items
+      [ ( Okx
+        , Frame
+            { recv_ts = start
+            ; stream = Funding
+            ; symbol = "BTC-USDT-SWAP"
+            ; frame = {|{"arg":{"channel":"mark-price"},"data":[]}|}
+            } )
+      ]
+  in
+  let session =
+    Ws_replay.create
+      (Ws_replay.Config.create ~speed:0. ~settle:Time_ns.Span.zero ~start ())
+      source
+      ~venue:Okx
+      ~conn_id:"c"
+      ~send:(fun frame ->
+        print_endline frame;
+        return ())
+  in
+  let%bind () =
+    Ws_replay.on_message
+      session
+      {|{"op":"subscribe","args":[{"channel":"funding-rate","instId":"BTC-USDT-SWAP"},{"channel":"mark-price","instId":"BTC-USDT-SWAP"}]}|}
+  in
+  let%bind () = Ws_replay.finished session in
+  print_s [%sexp (Ws_replay.stats session : Ws_replay.Stats.t)];
+  Ws_replay.close session;
+  [%expect
+    {|
+    {"event":"subscribe","arg":{"channel":"funding-rate","instId":"BTC-USDT-SWAP"},"connId":"c"}
+    {"event":"subscribe","arg":{"channel":"mark-price","instId":"BTC-USDT-SWAP"},"connId":"c"}
+    {"arg":{"channel":"mark-price"},"data":[]}
+    ((frames_sent 1) (replies_sent 2) (gaps_skipped 0))
+    |}];
+  return ()
+;;

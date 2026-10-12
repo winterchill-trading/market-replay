@@ -182,7 +182,10 @@ let rec loop t =
 ;;
 
 let add_series t series =
-  let fresh = List.filter series ~f:(fun s -> not (Set.mem t.subscribed s)) in
+  let fresh =
+    List.dedup_and_sort series ~compare:Series.compare
+    |> List.filter ~f:(fun s -> not (Set.mem t.subscribed s))
+  in
   t.subscribed <- List.fold fresh ~init:t.subscribed ~f:Set.add;
   let start = position t in
   let by_symbol =
