@@ -9,6 +9,8 @@ type t =
   ; metrics : Metrics.t
   ; binance_depth : string String.Table.t
   (** the last recorded [GET /fapi/v1/depth] body replayed, per symbol *)
+  ; binance_depth_served_at : Time_ns.t String.Table.t
+  (** when [GET /fapi/v1/depth] last served a body, per symbol *)
   }
 
 let create ?ws ?(time_source = Time_source.wall_clock ()) source =
@@ -18,15 +20,81 @@ let create ?ws ?(time_source = Time_source.wall_clock ()) source =
   ; next_conn_id = 0
   ; metrics = Metrics.create ()
   ; binance_depth = String.Table.create ()
+  ; binance_depth_served_at = String.Table.create ()
   }
 ;;
 
-let on_frame t ~(venue : Market_data.Venue.t) (item : Source.Item.t) =
+let binance_depth_body ~(venue : Market_data.Venue.t) (item : Source.Item.t) =
   match venue, item with
   | Binance, Frame { stream = L2; symbol; frame; _ }
-    when String.is_prefix frame ~prefix:{|{"lastUpdateId"|} ->
-    Hashtbl.set t.binance_depth ~key:symbol ~data:frame
-  | _ -> ()
+    when String.is_prefix frame ~prefix:{|{"lastUpdateId"|} -> Some (symbol, frame)
+  | _ -> None
+;;
+
+let on_frame t ~venue item =
+  Option.iter (binance_depth_body ~venue item) ~f:(fun (symbol, frame) ->
+    Hashtbl.set t.binance_depth ~key:symbol ~data:frame)
+;;
+
+(* The number after [key] in a Binance frame. *)
+let int_after frame ~key =
+  Option.bind (String.substr_index frame ~pattern:key) ~f:(fun i ->
+    let start = i + String.length key in
+    let stop =
+      String.lfindi frame ~pos:start ~f:(fun _ c -> not (Char.is_digit c))
+      |> Option.value ~default:(String.length frame)
+    in
+    Option.try_with (fun () ->
+      Int.of_string (String.sub frame ~pos:start ~len:(stop - start))))
+;;
+
+(* A speed 0 replay held for a depth snapshot goes on once the snapshot has been served
+   and no client asked again for [depth_quiet] (binance-client asks again 200 ms after a
+   snapshot that does not join its buffered diffs), or after [depth_hold_timeout]. *)
+let depth_quiet = Time_ns.Span.of_int_ms 300
+let depth_hold_timeout = Time_ns.Span.of_int_sec 3
+let depth_poll = Time_ns.Span.of_int_ms 20
+
+(* At speed 0 a whole recording replays before binance-client gets its depth snapshot (it
+   asks on the first diff and retries after 200 ms or, on a [503], a second), so its book
+   syncs once, at the end. After a recorded snapshot, the replay stops at the first diff
+   that reaches the snapshot's [lastUpdateId] (the one the book joins at) until the client
+   has fetched the snapshot: the diffs before it are buffered by the client, the ones
+   after it arrive as deltas. *)
+let binance_hold t =
+  let pending = String.Table.create () in
+  fun (item : Source.Item.t) ->
+    match item with
+    | Frame { stream = L2; symbol; frame; _ } ->
+      if String.is_prefix frame ~prefix:{|{"lastUpdateId"|}
+      then (
+        Option.iter (int_after frame ~key:{|"lastUpdateId":|}) ~f:(fun id ->
+          Hashtbl.set pending ~key:symbol ~data:id);
+        return ())
+      else (
+        match Hashtbl.find pending symbol, int_after frame ~key:{|,"u":|} with
+        | Some last_update_id, Some u when u >= last_update_id ->
+          Hashtbl.remove pending symbol;
+          let held_at = Time_source.now t.time_source in
+          let rec wait () =
+            let now = Time_source.now t.time_source in
+            let served_and_quiet =
+              match Hashtbl.find t.binance_depth_served_at symbol with
+              | Some at ->
+                Time_ns.(at >= held_at)
+                && Time_ns.Span.(Time_ns.diff now at >= depth_quiet)
+              | None -> false
+            in
+            if served_and_quiet
+               || Time_ns.Span.(Time_ns.diff now held_at >= depth_hold_timeout)
+            then return ()
+            else (
+              let%bind () = Time_source.after t.time_source depth_poll in
+              wait ())
+          in
+          wait ()
+        | _ -> return ())
+    | Frame _ | Gap _ -> return ()
 ;;
 
 let binance_depth t uri =
@@ -38,8 +106,14 @@ let binance_depth t uri =
   match Uri.get_query_param uri "symbol" with
   | None -> respond ~status:`Bad_request {|{"code":-1102,"msg":"symbol is required"}|}
   | Some symbol ->
-    (match Hashtbl.find t.binance_depth (String.uppercase symbol) with
-     | Some body -> respond ~status:`OK body
+    let symbol = String.uppercase symbol in
+    (match Hashtbl.find t.binance_depth symbol with
+     | Some body ->
+       Hashtbl.set
+         t.binance_depth_served_at
+         ~key:symbol
+         ~data:(Time_source.now t.time_source);
+       respond ~status:`OK body
      | None ->
        respond
          ~status:`Service_unavailable
@@ -129,6 +203,11 @@ let handle_ws t ~venue ~config reader writer =
       ~venue
       ~conn_id
       ~on_frame:(on_frame t ~venue)
+      ?hold:
+        (match venue with
+         | Binance when Float.(config.Ws_replay.Config.speed = 0.) ->
+           Some (binance_hold t)
+         | _ -> None)
       ~send:(fun frame -> Pipe.write_if_open outgoing frame)
   in
   let%map () =
