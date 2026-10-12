@@ -10,6 +10,11 @@
       server's [ws] config. The query parameters [from], [to] and [speed] override it per
       connection; without a server [ws] config, [from] is required.
 
+    - [GET /fapi/v1/depth?symbol=S]: Binance's REST depth snapshot, which binance-client
+      fetches to sync its book: the last recorded snapshot body of [S] that a websocket
+      replay has passed, or [503] until one has. The recorder stores these bodies in the
+      [l2] files; they are not sent over the websocket.
+
     Anything else is [404]. *)
 
 open! Core

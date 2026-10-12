@@ -6,10 +6,42 @@ type t =
   ; ws : Ws_replay.Config.t option
   ; time_source : Time_source.t
   ; mutable next_conn_id : int
+  ; binance_depth : string String.Table.t
+  (** the last recorded [GET /fapi/v1/depth] body replayed, per symbol *)
   }
 
 let create ?ws ?(time_source = Time_source.wall_clock ()) source =
-  { source; ws; time_source = Time_source.read_only time_source; next_conn_id = 0 }
+  { source
+  ; ws
+  ; time_source = Time_source.read_only time_source
+  ; next_conn_id = 0
+  ; binance_depth = String.Table.create ()
+  }
+;;
+
+let on_frame t ~(venue : Market_data.Venue.t) (item : Source.Item.t) =
+  match venue, item with
+  | Binance, Frame { stream = L2; symbol; frame; _ }
+    when String.is_prefix frame ~prefix:{|{"lastUpdateId"|} ->
+    Hashtbl.set t.binance_depth ~key:symbol ~data:frame
+  | _ -> ()
+;;
+
+let binance_depth t uri =
+  let json = Cohttp.Header.of_list [ "content-type", "application/json" ] in
+  let respond ~status body =
+    let%map response = Cohttp_async.Server.respond_string ~headers:json ~status body in
+    `Response response
+  in
+  match Uri.get_query_param uri "symbol" with
+  | None -> respond ~status:`Bad_request {|{"code":-1102,"msg":"symbol is required"}|}
+  | Some symbol ->
+    (match Hashtbl.find t.binance_depth (String.uppercase symbol) with
+     | Some body -> respond ~status:`OK body
+     | None ->
+       respond
+         ~status:`Service_unavailable
+         {|{"code":-1,"msg":"no depth snapshot replayed yet"}|})
 ;;
 
 let text = Cohttp.Header.of_list [ "content-type", "text/plain; charset=utf-8" ]
@@ -90,6 +122,7 @@ let handle_ws t ~venue ~config reader writer =
       t.source
       ~venue
       ~conn_id
+      ~on_frame:(on_frame t ~venue)
       ~send:(fun frame -> Pipe.write_if_open outgoing frame)
   in
   let%map () =
@@ -144,6 +177,7 @@ let handler t ~body:_ _addr req =
   let uri = Cohttp.Request.uri req in
   match Cohttp.Request.meth req, String.split (Uri.path uri) ~on:'/' with
   | `GET, [ ""; "replay" ] -> replay_http t uri
+  | `GET, [ ""; "fapi"; "v1"; "depth" ] -> binance_depth t uri
   | `GET, "" :: "ws" :: venue :: _ when header_is req "upgrade" "websocket" ->
     ws_upgrade t req ~venue
   | _, _ -> respond_text ~status:`Not_found (sprintf "no route for %s\n" (Uri.path uri))
