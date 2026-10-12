@@ -48,3 +48,36 @@ let%expect_test "okx-feed Live_feed over the replay" =
     |}];
   Cohttp_async.Server.close server
 ;;
+
+let%expect_test "bitget-feed Live_feed over the replay" =
+  let%bind replay, server = start () in
+  let%bind feed, stats =
+    Bitget_feed.Live_feed.create_with_stats
+      (Bitget_feed.Config.create
+         ~url:(url server "/ws/bitget?from=2026-10-12T16:54:00Z")
+         ())
+      ~symbols:[ "BTCUSDT" ]
+      ~streams:all_streams
+  in
+  let%bind () = summarize feed in
+  print_counters replay ~parse_errors:(stats ()).parse_errors;
+  [%expect
+    {|
+    (trade ((venue Bitget) (symbol BTCUSDT)) Buy 82576 0.1161)
+    (trade ((venue Bitget) (symbol BTCUSDT)) Buy 82576 0.058)
+    (trade ((venue Bitget) (symbol BTCUSDT)) Buy 82576 0.1159)
+    (bbo 82560 82560.1)
+    (bbo 82560 82560.1)
+    (bbo 82560 82560.1)
+    (l2 Snapshot (bids 500) (asks 500))
+    (l2 Delta (bids 5) (asks 12))
+    (l2 Delta (bids 39) (asks 28))
+    (funding 5.4E-05 (mark 82561.6))
+    (funding 5.4E-05 (mark 82561.6))
+    (funding 5.4E-05 (mark 82561.5))
+    market_replay_ws_connections_total{venue="bitget"} 4
+    market_replay_ws_replies_total{venue="bitget"} 4
+    (parse_errors 0)
+    |}];
+  Cohttp_async.Server.close server
+;;
