@@ -30,7 +30,7 @@ module Action = struct
   [@@deriving sexp_of]
 end
 
-let supported = [ Venue.Binance; Bybit; Hyperliquid ]
+let supported = [ Venue.Binance; Bybit; Hyperliquid; Okx ]
 let json = Yojson.Safe.to_string
 
 let parse decode message =
@@ -38,6 +38,26 @@ let parse decode message =
   | x -> Some x
   | exception _ -> None
 ;;
+
+(* Small accessors for the venues parsed without a protocol library. *)
+let field key : Yojson.Safe.t -> Yojson.Safe.t option = function
+  | `Assoc fields -> List.Assoc.find fields key ~equal:String.equal
+  | _ -> None
+;;
+
+let string_field key json =
+  match field key json with
+  | Some (`String s) -> Some s
+  | _ -> None
+;;
+
+let list_field key json =
+  match field key json with
+  | Some (`List l) -> l
+  | _ -> []
+;;
+
+let has_substring frame substring = String.is_substring frame ~substring
 
 module Binance = struct
   open Binance_protocol
@@ -217,6 +237,59 @@ module Hyperliquid = struct
   ;;
 end
 
+module Okx = struct
+  let series_of arg : Series.t list =
+    match string_field "channel" arg, string_field "instId" arg with
+    | Some channel, Some symbol ->
+      let one stream = [ { Series.stream; symbol } ] in
+      (match channel with
+       | "trades" | "trades-all" -> one Trades
+       | "bbo-tbt" -> one Bbo
+       | "books" | "books5" | "books-l2-tbt" | "books50-l2-tbt" | "books-elp" -> one L2
+       | "funding-rate" | "mark-price" -> one Funding
+       (* [index-tickers] of the index is recorded in the swap's funding files. *)
+       | _ -> [])
+    | _ -> []
+  ;;
+
+  let error ~conn_id message =
+    json
+      (`Assoc
+        [ "event", `String "error"
+        ; "code", `String "60012"
+        ; "msg", `String ("Invalid request: " ^ message)
+        ; "connId", `String conn_id
+        ])
+  ;;
+
+  let on_message ~conn_id message : Action.t =
+    if String.equal (String.strip message) "ping"
+    then Reply [ "pong" ]
+    else (
+      match Yojson.Safe.from_string message with
+      | exception _ -> Reply [ error ~conn_id message ]
+      | request ->
+        let args = list_field "args" request in
+        let ack op arg =
+          json (`Assoc [ "event", `String op; "arg", arg; "connId", `String conn_id ])
+        in
+        (match string_field "op" request with
+         | Some (("subscribe" | "unsubscribe") as op) when not (List.is_empty args) ->
+           let series = List.concat_map args ~f:series_of in
+           let replies = List.map args ~f:(ack op) in
+           if String.equal op "subscribe"
+           then Subscribe { series; replies }
+           else Unsubscribe { series; replies }
+         | _ -> Reply [ error ~conn_id message ]))
+  ;;
+
+  (* Pushes start with [arg]; acks, errors and notices carry an [event]. *)
+  let is_data frame =
+    String.is_prefix frame ~prefix:{|{"arg":|}
+    || ((not (has_substring frame {|"event":|})) && has_substring frame {|"data":|})
+  ;;
+end
+
 module Session = struct
   type t =
     { venue : Venue.t
@@ -230,7 +303,8 @@ module Session = struct
     | Binance -> Binance.on_message message
     | Bybit -> Bybit.on_message ~conn_id:t.conn_id message
     | Hyperliquid -> Hyperliquid.on_message message
-    | Okx | Coinbase | Kraken | Deribit | Bitget | Nyse | Cboe | Cme -> Ignore
+    | Okx -> Okx.on_message ~conn_id:t.conn_id message
+    | Coinbase | Kraken | Deribit | Bitget | Nyse | Cboe | Cme -> Ignore
   ;;
 
   let outgoing _ frame = frame
@@ -245,5 +319,6 @@ let is_data (venue : Venue.t) frame =
   | Binance -> Binance.is_data frame
   | Bybit -> Bybit.is_data frame
   | Hyperliquid -> Hyperliquid.is_data frame
-  | Okx | Coinbase | Kraken | Deribit | Bitget | Nyse | Cboe | Cme -> true
+  | Okx -> Okx.is_data frame
+  | Coinbase | Kraken | Deribit | Bitget | Nyse | Cboe | Cme -> true
 ;;

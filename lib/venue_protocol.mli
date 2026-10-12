@@ -15,6 +15,11 @@
       [{"channel": "pong"}]. [trades] is [Trades], [l2Book] [L2] (or [Bbo], where the
       recorder files [l2Book] frames when only [Bbo] was recorded), [activeAssetCtx]
       [Funding].
+    - OKX v5 public ([/ws/okx]): [{"op": "subscribe", "args": [...]}] is answered with one
+      [{"event": "subscribe", "arg": ...}] per argument, the text [ping] with [pong].
+      [trades] is [Trades], [bbo-tbt] [Bbo], [books...] [L2], [funding-rate] and
+      [mark-price] [Funding] (the recorded funding files also hold [index-tickers]).
+      Pushes (frames with [arg] and [data] and no [event]) are passed on.
 
     Other venues are refused. Symbols are returned as the recorder spells them in its
     directories (Binance and Bybit uppercase). *)
@@ -47,7 +52,7 @@ module Action : sig
   [@@deriving sexp_of]
 end
 
-(** The venues served over websockets: Binance, Bybit and Hyperliquid. *)
+(** The venues served over websockets. *)
 val supported : Market_data.Venue.t list
 
 (** One client connection. Venues whose replies depend on what the connection did before
