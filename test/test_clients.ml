@@ -22,14 +22,15 @@ let url server path =
     (sprintf "ws://localhost:%d%s" (Cohttp_async.Server.listening_on server) path)
 ;;
 
-(* Reads up to [n] values, giving up after a second without one. *)
+(* Reads up to [n] values, giving up after 3s without one (binance-client retries a failed
+   depth snapshot after 1s). *)
 let take pipe n =
   let rec go acc n =
     if n = 0
     then return (List.rev acc)
     else (
       match%bind
-        Clock_ns.with_timeout (Time_ns.Span.of_sec 1.) (Pipe.values_available pipe)
+        Clock_ns.with_timeout (Time_ns.Span.of_sec 3.) (Pipe.values_available pipe)
       with
       | `Timeout | `Result `Eof -> return (List.rev acc)
       | `Result `Ok ->
@@ -139,10 +140,10 @@ let%expect_test "binance-client Live_feed over the replay" =
     Binance_client.Live_feed.create
       (Binance_client.Config.Read_only.create
          ~ws_url:(url server "/ws/binance")
-         ~base_url:(Uri.of_string "http://localhost:1")
+         ~base_url:(Uri.with_scheme (url server "") (Some "http"))
          ())
       ~symbols:[ "BTCUSDT" ]
-      ~streams:[ Trades; Bbo; Funding ]
+      ~streams:[ Trades; Bbo; L2; Funding ]
   in
   let%bind () = summarize feed in
   [%expect
@@ -153,6 +154,7 @@ let%expect_test "binance-client Live_feed over the replay" =
     (bbo 82613.5 82613.6)
     (bbo 82613.5 82613.6)
     (bbo 82613.5 82613.6)
+    (l2 Snapshot (bids 908) (asks 765))
     (funding 3.61E-05 (mark 82621.50711594))
     (funding 3.61E-05 (mark 82620.67168116))
     (funding 3.61E-05 (mark 82620.22276812))
