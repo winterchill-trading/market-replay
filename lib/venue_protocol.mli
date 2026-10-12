@@ -20,6 +20,9 @@
       [trades] is [Trades], [bbo-tbt] [Bbo], [books...] [L2], [funding-rate] and
       [mark-price] [Funding] (the recorded funding files also hold [index-tickers]).
       Pushes (frames with [arg] and [data] and no [event]) are passed on.
+    - Bitget v2 public ([/ws/bitget]): the same [op]/[args] shape and [ping]/[pong] as
+      OKX, acks without a connection id. [trade] is [Trades], [books1] [Bbo], [books],
+      [books5] and [books15] [L2], [ticker] [Funding].
 
     Other venues are refused. Symbols are returned as the recorder spells them in its
     directories (Binance and Bybit uppercase). *)

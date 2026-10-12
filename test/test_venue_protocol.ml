@@ -138,6 +138,40 @@ let%expect_test "okx-feed subscriptions" =
     |}]
 ;;
 
+let%expect_test "bitget-feed subscriptions" =
+  let config = Bitget_feed.Config.create () in
+  List.iter streams ~f:(fun stream ->
+    show
+      Bitget
+      (Bitget_feed.Wire.subscribe [ Bitget_feed.Live_feed.arg config stream "BTCUSDT" ]));
+  show
+    Bitget
+    (Bitget_feed.Wire.unsubscribe [ Bitget_feed.Live_feed.arg config L2 "BTCUSDT" ]);
+  show Bitget "ping";
+  show Bitget {|{"op":"login","args":[]}|};
+  [%expect
+    {|
+    (Subscribe (series (((stream Trades) (symbol BTCUSDT))))
+     (replies
+      ("{\"event\":\"subscribe\",\"arg\":{\"instType\":\"USDT-FUTURES\",\"channel\":\"trade\",\"instId\":\"BTCUSDT\"}}")))
+    (Subscribe (series (((stream Bbo) (symbol BTCUSDT))))
+     (replies
+      ("{\"event\":\"subscribe\",\"arg\":{\"instType\":\"USDT-FUTURES\",\"channel\":\"books1\",\"instId\":\"BTCUSDT\"}}")))
+    (Subscribe (series (((stream L2) (symbol BTCUSDT))))
+     (replies
+      ("{\"event\":\"subscribe\",\"arg\":{\"instType\":\"USDT-FUTURES\",\"channel\":\"books\",\"instId\":\"BTCUSDT\"}}")))
+    (Subscribe (series (((stream Funding) (symbol BTCUSDT))))
+     (replies
+      ("{\"event\":\"subscribe\",\"arg\":{\"instType\":\"USDT-FUTURES\",\"channel\":\"ticker\",\"instId\":\"BTCUSDT\"}}")))
+    (Unsubscribe (series (((stream L2) (symbol BTCUSDT))))
+     (replies
+      ("{\"event\":\"unsubscribe\",\"arg\":{\"instType\":\"USDT-FUTURES\",\"channel\":\"books\",\"instId\":\"BTCUSDT\"}}")))
+    (Reply (pong))
+    (Reply
+     ("{\"event\":\"error\",\"code\":30001,\"msg\":\"invalid request: {\\\"op\\\":\\\"login\\\",\\\"args\\\":[]}\"}"))
+    |}]
+;;
+
 let%expect_test "is_data" =
   List.iter
     [ Market_data.Venue.Binance, {|{"stream":"btcusdt@aggTrade","data":{}}|}
@@ -151,6 +185,9 @@ let%expect_test "is_data" =
     ; Okx, {|{"arg":{"channel":"trades","instId":"BTC-USDT-SWAP"},"data":[]}|}
     ; Okx, {|{"event":"subscribe","arg":{"channel":"trades"},"connId":"a"}|}
     ; Okx, "pong"
+    ; Bitget, {|{"action":"snapshot","arg":{"channel":"trade"},"data":[]}|}
+    ; Bitget, {|{"event":"subscribe","arg":{"channel":"trade"}}|}
+    ; Bitget, "pong"
     ]
     ~f:(fun (venue, frame) -> printf "%b %s\n" (Venue_protocol.is_data venue frame) frame);
   [%expect
@@ -165,6 +202,9 @@ let%expect_test "is_data" =
     false {"channel":"pong"}
     true {"arg":{"channel":"trades","instId":"BTC-USDT-SWAP"},"data":[]}
     false {"event":"subscribe","arg":{"channel":"trades"},"connId":"a"}
+    false pong
+    true {"action":"snapshot","arg":{"channel":"trade"},"data":[]}
+    false {"event":"subscribe","arg":{"channel":"trade"}}
     false pong
     |}]
 ;;

@@ -30,7 +30,7 @@ module Action = struct
   [@@deriving sexp_of]
 end
 
-let supported = [ Venue.Binance; Bybit; Hyperliquid; Okx ]
+let supported = [ Venue.Binance; Bybit; Hyperliquid; Okx; Bitget ]
 let json = Yojson.Safe.to_string
 
 let parse decode message =
@@ -290,6 +290,55 @@ module Okx = struct
   ;;
 end
 
+module Bitget = struct
+  let series_of arg : Series.t list =
+    match string_field "channel" arg, string_field "instId" arg with
+    | Some channel, Some symbol ->
+      let one stream = [ { Series.stream; symbol } ] in
+      (match channel with
+       | "trade" -> one Trades
+       | "books1" -> one Bbo
+       | "books" | "books5" | "books15" -> one L2
+       | "ticker" -> one Funding
+       | _ -> [])
+    | _ -> []
+  ;;
+
+  let error message =
+    json
+      (`Assoc
+        [ "event", `String "error"
+        ; "code", `Int 30001
+        ; "msg", `String ("invalid request: " ^ message)
+        ])
+  ;;
+
+  let on_message message : Action.t =
+    if String.equal (String.strip message) "ping"
+    then Reply [ "pong" ]
+    else (
+      match Yojson.Safe.from_string message with
+      | exception _ -> Reply [ error message ]
+      | request ->
+        let args = list_field "args" request in
+        let ack op arg = json (`Assoc [ "event", `String op; "arg", arg ]) in
+        (match string_field "op" request with
+         | Some (("subscribe" | "unsubscribe") as op) when not (List.is_empty args) ->
+           let series = List.concat_map args ~f:series_of in
+           let replies = List.map args ~f:(ack op) in
+           if String.equal op "subscribe"
+           then Subscribe { series; replies }
+           else Unsubscribe { series; replies }
+         | _ -> Reply [ error message ]))
+  ;;
+
+  (* Pushes start with [action]; acks and errors carry an [event]. *)
+  let is_data frame =
+    String.is_prefix frame ~prefix:{|{"action":|}
+    || ((not (has_substring frame {|"event":|})) && has_substring frame {|"data":|})
+  ;;
+end
+
 module Session = struct
   type t =
     { venue : Venue.t
@@ -304,7 +353,8 @@ module Session = struct
     | Bybit -> Bybit.on_message ~conn_id:t.conn_id message
     | Hyperliquid -> Hyperliquid.on_message message
     | Okx -> Okx.on_message ~conn_id:t.conn_id message
-    | Coinbase | Kraken | Deribit | Bitget | Nyse | Cboe | Cme -> Ignore
+    | Bitget -> Bitget.on_message message
+    | Coinbase | Kraken | Deribit | Nyse | Cboe | Cme -> Ignore
   ;;
 
   let outgoing _ frame = frame
@@ -320,5 +370,6 @@ let is_data (venue : Venue.t) frame =
   | Bybit -> Bybit.is_data frame
   | Hyperliquid -> Hyperliquid.is_data frame
   | Okx -> Okx.is_data frame
-  | Coinbase | Kraken | Deribit | Bitget | Nyse | Cboe | Cme -> true
+  | Bitget -> Bitget.is_data frame
+  | Coinbase | Kraken | Deribit | Nyse | Cboe | Cme -> true
 ;;
