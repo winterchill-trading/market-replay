@@ -15,6 +15,9 @@
       replay has passed, or [503] until one has. The recorder stores these bodies in the
       [l2] files; they are not sent over the websocket.
 
+    - [GET /healthz]: [200 ok] while the server runs.
+    - [GET /metrics]: {!Metrics.render}.
+
     Anything else is [404]. *)
 
 open! Core
@@ -24,6 +27,8 @@ type t
 
 (** [time_source] (default the wall clock) paces websocket replays. *)
 val create : ?ws:Ws_replay.Config.t -> ?time_source:Time_source.t -> Source.t -> t
+
+val metrics : t -> Metrics.t
 
 (** Listens on [port] (0 picks a free one). *)
 val start : t -> port:int -> (Socket.Address.Inet.t, int) Cohttp_async.Server.t Deferred.t

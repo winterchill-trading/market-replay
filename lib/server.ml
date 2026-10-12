@@ -6,6 +6,7 @@ type t =
   ; ws : Ws_replay.Config.t option
   ; time_source : Time_source.t
   ; mutable next_conn_id : int
+  ; metrics : Metrics.t
   ; binance_depth : string String.Table.t
   (** the last recorded [GET /fapi/v1/depth] body replayed, per symbol *)
   }
@@ -15,6 +16,7 @@ let create ?ws ?(time_source = Time_source.wall_clock ()) source =
   ; ws
   ; time_source = Time_source.read_only time_source
   ; next_conn_id = 0
+  ; metrics = Metrics.create ()
   ; binance_depth = String.Table.create ()
   }
 ;;
@@ -60,10 +62,12 @@ let replay_http t uri =
   match Replay_request.of_uri uri with
   | Error error -> respond_text ~status:`Bad_request (Error.to_string_hum error ^ "\n")
   | Ok { venue; symbols; streams; start; stop } ->
+    Metrics.http_request t.metrics;
     let items = Source.read t.source ~venue ~symbols ~streams ~start ~stop in
     (* One chunk per batch of lines, not per line. *)
     let body =
       Pipe.map' items ~max_queue_length:1024 ~f:(fun batch ->
+        Metrics.http_lines t.metrics (Queue.length batch);
         return (Queue.singleton (String.concat (List.map (Queue.to_list batch) ~f:line))))
     in
     let%map response =
@@ -115,8 +119,10 @@ let handle_ws t ~venue ~config reader writer =
   let incoming, outgoing = Websocket.pipes ws in
   let conn_id = sprintf "replay-%d" t.next_conn_id in
   t.next_conn_id <- t.next_conn_id + 1;
+  Metrics.ws_connected t.metrics venue;
   let session =
     Ws_replay.create
+      ~metrics:t.metrics
       ~time_source:t.time_source
       config
       t.source
@@ -129,6 +135,7 @@ let handle_ws t ~venue ~config reader writer =
     Pipe.iter incoming ~f:(fun message -> Ws_replay.on_message session message)
   in
   Ws_replay.close session;
+  Metrics.ws_disconnected t.metrics venue;
   Pipe.close outgoing
 ;;
 
@@ -176,12 +183,24 @@ let ws_upgrade t req ~venue =
 let handler t ~body:_ _addr req =
   let uri = Cohttp.Request.uri req in
   match Cohttp.Request.meth req, String.split (Uri.path uri) ~on:'/' with
+  | `GET, [ ""; "healthz" ] -> respond_text ~status:`OK "ok\n"
+  | `GET, [ ""; "metrics" ] ->
+    let%map response =
+      Cohttp_async.Server.respond_string
+        ~headers:
+          (Cohttp.Header.of_list
+             [ "content-type", "text/plain; version=0.0.4; charset=utf-8" ])
+        (Metrics.render t.metrics)
+    in
+    `Response response
   | `GET, [ ""; "replay" ] -> replay_http t uri
   | `GET, [ ""; "fapi"; "v1"; "depth" ] -> binance_depth t uri
   | `GET, "" :: "ws" :: venue :: _ when header_is req "upgrade" "websocket" ->
     ws_upgrade t req ~venue
   | _, _ -> respond_text ~status:`Not_found (sprintf "no route for %s\n" (Uri.path uri))
 ;;
+
+let metrics t = t.metrics
 
 let start t ~port =
   Cohttp_async.Server.create_expert
