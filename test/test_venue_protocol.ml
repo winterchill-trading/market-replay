@@ -201,6 +201,44 @@ let%expect_test "deribit-feed subscriptions" =
     |}]
 ;;
 
+let%expect_test "kraken-feed subscriptions" =
+  List.iter streams ~f:(fun stream ->
+    let symbol : Market_data.Stream.t -> string = function
+      | Funding -> Kraken_feed.Symbols.futures "BTC/USD"
+      | _ -> "BTC/USD"
+    in
+    show Kraken (Kraken_feed.Live_feed.subscribe_request stream [ symbol stream ]));
+  show Kraken (Kraken_feed.Live_feed.subscribe_request ~unsubscribe:true L2 [ "BTC/USD" ]);
+  show Kraken {|{"method":"ping","req_id":4}|};
+  show Kraken {|{"event":"subscribe","feed":"book","product_ids":["PF_XBTUSD"]}|};
+  show Kraken {|{"method":"subscribe","params":{}}|};
+  [%expect
+    {|
+    (Subscribe (series (((stream Trades) (symbol BTC/USD))))
+     (replies
+      ("{\"method\":\"subscribe\",\"result\":{\"channel\":\"trade\",\"snapshot\":false,\"symbol\":\"BTC/USD\"},\"success\":true,\"time_in\":\"1970-01-01T00:00:00.000000000Z\",\"time_out\":\"1970-01-01T00:00:00.000000000Z\"}")))
+    (Subscribe (series (((stream Bbo) (symbol BTC/USD))))
+     (replies
+      ("{\"method\":\"subscribe\",\"result\":{\"channel\":\"ticker\",\"event_trigger\":\"bbo\",\"symbol\":\"BTC/USD\"},\"success\":true,\"time_in\":\"1970-01-01T00:00:00.000000000Z\",\"time_out\":\"1970-01-01T00:00:00.000000000Z\"}")))
+    (Subscribe (series (((stream L2) (symbol BTC/USD))))
+     (replies
+      ("{\"method\":\"subscribe\",\"result\":{\"channel\":\"book\",\"depth\":10,\"symbol\":\"BTC/USD\"},\"success\":true,\"time_in\":\"1970-01-01T00:00:00.000000000Z\",\"time_out\":\"1970-01-01T00:00:00.000000000Z\"}")))
+    (Subscribe (series (((stream Funding) (symbol PF_XBTUSD))))
+     (replies
+      ("{\"event\":\"subscribed\",\"feed\":\"ticker\",\"product_ids\":[\"PF_XBTUSD\"]}")))
+    (Unsubscribe (series (((stream L2) (symbol BTC/USD))))
+     (replies
+      ("{\"method\":\"unsubscribe\",\"result\":{\"channel\":\"book\",\"depth\":10,\"symbol\":\"BTC/USD\"},\"success\":true,\"time_in\":\"1970-01-01T00:00:00.000000000Z\",\"time_out\":\"1970-01-01T00:00:00.000000000Z\"}")))
+    (Reply
+     ("{\"method\":\"pong\",\"req_id\":4,\"time_in\":\"1970-01-01T00:00:00.000000000Z\",\"time_out\":\"1970-01-01T00:00:00.000000000Z\"}"))
+    (Subscribe (series ())
+     (replies
+      ("{\"event\":\"subscribed\",\"feed\":\"book\",\"product_ids\":[\"PF_XBTUSD\"]}")))
+    (Reply
+     ("{\"method\":\"subscribe\",\"error\":\"Unsupported request\",\"success\":false,\"time_in\":\"1970-01-01T00:00:00.000000000Z\",\"time_out\":\"1970-01-01T00:00:00.000000000Z\"}"))
+    |}]
+;;
+
 let%expect_test "is_data" =
   List.iter
     [ Market_data.Venue.Binance, {|{"stream":"btcusdt@aggTrade","data":{}}|}
@@ -220,6 +258,12 @@ let%expect_test "is_data" =
     ; Deribit, {|{"jsonrpc":"2.0","method":"subscription","params":{"channel":"x"}}|}
     ; Deribit, {|{"jsonrpc":"2.0","method":"heartbeat","params":{"type":"test_request"}}|}
     ; Deribit, {|{"jsonrpc":"2.0","id":3,"result":"ok"}|}
+    ; Kraken, {|{"channel":"trade","type":"update","data":[]}|}
+    ; Kraken, {|{"channel":"heartbeat"}|}
+    ; Kraken, {|{"channel":"status","type":"update","data":[]}|}
+    ; Kraken, {|{"method":"subscribe","result":{"channel":"trade"},"success":true}|}
+    ; Kraken, {|{"time":1,"product_id":"PF_XBTUSD","feed":"ticker"}|}
+    ; Kraken, {|{"event":"subscribed","feed":"ticker","product_ids":["PF_XBTUSD"]}|}
     ]
     ~f:(fun (venue, frame) -> printf "%b %s\n" (Venue_protocol.is_data venue frame) frame);
   [%expect
@@ -241,5 +285,11 @@ let%expect_test "is_data" =
     true {"jsonrpc":"2.0","method":"subscription","params":{"channel":"x"}}
     false {"jsonrpc":"2.0","method":"heartbeat","params":{"type":"test_request"}}
     false {"jsonrpc":"2.0","id":3,"result":"ok"}
+    true {"channel":"trade","type":"update","data":[]}
+    false {"channel":"heartbeat"}
+    false {"channel":"status","type":"update","data":[]}
+    false {"method":"subscribe","result":{"channel":"trade"},"success":true}
+    true {"time":1,"product_id":"PF_XBTUSD","feed":"ticker"}
+    false {"event":"subscribed","feed":"ticker","product_ids":["PF_XBTUSD"]}
     |}]
 ;;

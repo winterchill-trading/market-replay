@@ -30,7 +30,7 @@ module Action = struct
   [@@deriving sexp_of]
 end
 
-let supported = [ Venue.Binance; Bybit; Hyperliquid; Okx; Bitget; Deribit ]
+let supported = [ Venue.Binance; Bybit; Hyperliquid; Okx; Bitget; Deribit; Kraken ]
 let json = Yojson.Safe.to_string
 
 let parse decode message =
@@ -405,6 +405,136 @@ module Deribit = struct
   let is_data frame = has_substring frame {|"method":"subscription"|}
 end
 
+module Kraken = struct
+  let iso time = `String (Time_ns.to_string_iso8601_basic time ~zone:Time_float.Zone.utc)
+
+  let strings json key =
+    list_field key json
+    |> List.filter_map ~f:(function
+      | `String s -> Some s
+      | _ -> None)
+  ;;
+
+  (* Spot v2: [{"method": "subscribe", "params": {"channel": ..., "symbol": [...]}}]. *)
+  module Spot = struct
+    let series_of ~channel symbol : Series.t list =
+      let one stream = [ { Series.stream; symbol } ] in
+      match channel with
+      | "trade" -> one Trades
+      | "ticker" -> one Bbo
+      | "book" -> one L2
+      | _ -> []
+    ;;
+
+    let reply ~now ~method_ ~req_id fields =
+      json
+        (`Assoc
+          ([ "method", `String method_ ]
+           @ fields
+           @ Option.value_map req_id ~default:[] ~f:(fun id -> [ "req_id", id ])
+           @ [ "time_in", iso now; "time_out", iso now ]))
+    ;;
+
+    let on_message ~now ~method_ request : Action.t =
+      let req_id = field "req_id" request in
+      let params = Option.value (field "params" request) ~default:(`Assoc []) in
+      match method_, string_field "channel" params with
+      | "ping", _ -> Reply [ reply ~now ~method_:"pong" ~req_id [] ]
+      | ("subscribe" | "unsubscribe"), Some channel ->
+        let symbols = strings params "symbol" in
+        let others =
+          match params with
+          | `Assoc fields ->
+            List.filter fields ~f:(fun (key, _) -> not (String.equal key "symbol"))
+          | _ -> []
+        in
+        let ack symbol =
+          reply
+            ~now
+            ~method_
+            ~req_id
+            [ "result", `Assoc (others @ [ "symbol", `String symbol ])
+            ; "success", `Bool true
+            ]
+        in
+        let series = List.concat_map symbols ~f:(series_of ~channel) in
+        let replies = List.map symbols ~f:ack in
+        if String.equal method_ "subscribe"
+        then Subscribe { series; replies }
+        else Unsubscribe { series; replies }
+      | _ ->
+        Reply
+          [ reply
+              ~now
+              ~method_
+              ~req_id
+              [ "error", `String "Unsupported request"; "success", `Bool false ]
+          ]
+    ;;
+  end
+
+  (* Futures v1: [{"event": "subscribe", "feed": ..., "product_ids": [...]}]. *)
+  module Futures = struct
+    let on_message ~event request : Action.t =
+      let symbols = strings request "product_ids" in
+      match event, string_field "feed" request with
+      | ("subscribe" | "unsubscribe"), Some feed ->
+        let series : Series.t list =
+          match feed with
+          | "ticker" ->
+            List.map symbols ~f:(fun symbol -> { Series.stream = Funding; symbol })
+          | _ -> []
+        in
+        let replies =
+          [ json
+              (`Assoc
+                [ "event", `String (event ^ "d")
+                ; "feed", `String feed
+                ; "product_ids", `List (List.map symbols ~f:(fun s -> `String s))
+                ])
+          ]
+        in
+        if String.equal event "subscribe"
+        then Subscribe { series; replies }
+        else Unsubscribe { series; replies }
+      | _ ->
+        Reply
+          [ json (`Assoc [ "event", `String "error"; "message", `String "Invalid feed" ])
+          ]
+    ;;
+  end
+
+  let on_message ~now message : Action.t =
+    match Yojson.Safe.from_string message with
+    | exception _ ->
+      Reply
+        [ json (`Assoc [ "error", `String "Malformed request"; "success", `Bool false ]) ]
+    | request ->
+      (match string_field "method" request, string_field "event" request with
+       | Some method_, _ -> Spot.on_message ~now ~method_ request
+       | None, Some event -> Futures.on_message ~event request
+       | None, None ->
+         Reply
+           [ json
+               (`Assoc [ "error", `String "Malformed request"; "success", `Bool false ])
+           ])
+  ;;
+
+  (* Spot pushes have a [channel] other than [heartbeat] and [status]; futures pushes a
+     [feed] and no [event]. Acks and pongs carry [method] or [event]. *)
+  let is_data frame =
+    if String.is_prefix frame ~prefix:{|{"channel":"|}
+    then
+      not
+        (String.is_prefix frame ~prefix:{|{"channel":"heartbeat"|}
+         || String.is_prefix frame ~prefix:{|{"channel":"status"|})
+    else
+      (not (String.is_prefix frame ~prefix:{|{"method":|}))
+      && has_substring frame {|"feed":"|}
+      && not (has_substring frame {|"event":"|})
+  ;;
+end
+
 module Session = struct
   type t =
     { venue : Venue.t
@@ -421,7 +551,8 @@ module Session = struct
     | Okx -> Okx.on_message ~conn_id:t.conn_id message
     | Bitget -> Bitget.on_message message
     | Deribit -> Deribit.on_message ~now message
-    | Coinbase | Kraken | Nyse | Cboe | Cme -> Ignore
+    | Kraken -> Kraken.on_message ~now message
+    | Coinbase | Nyse | Cboe | Cme -> Ignore
   ;;
 
   let outgoing _ frame = frame
@@ -439,5 +570,6 @@ let is_data (venue : Venue.t) frame =
   | Okx -> Okx.is_data frame
   | Bitget -> Bitget.is_data frame
   | Deribit -> Deribit.is_data frame
-  | Coinbase | Kraken | Nyse | Cboe | Cme -> true
+  | Kraken -> Kraken.is_data frame
+  | Coinbase | Nyse | Cboe | Cme -> true
 ;;

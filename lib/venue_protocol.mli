@@ -28,6 +28,13 @@
       a version; other methods get a JSON-RPC error. [trades.<s>...] is [Trades],
       [quote.<s>] [Bbo], [book.<s>...] [L2], [ticker.<s>...] [Funding]. Only
       [subscription] notifications are passed on.
+    - Kraken ([/ws/kraken], for both of its APIs): spot v2
+      [{"method": "subscribe", "params": {"channel": ..., "symbol": [...]}}] is answered
+      with one ack per symbol, [{"method": "ping"}] with a pong; [trade] is [Trades],
+      [ticker] [Bbo], [book] [L2]. Futures v1
+      [{"event": "subscribe", "feed": "ticker", "product_ids": [...]}] is answered with
+      [subscribed]; [ticker] is [Funding]. Heartbeats, status frames, acks and pongs are
+      not passed on.
 
     Other venues are refused. Symbols are returned as the recorder spells them in its
     directories (Binance and Bybit uppercase). *)
