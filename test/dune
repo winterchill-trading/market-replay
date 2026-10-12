@@ -3,6 +3,6 @@
  (inline_tests
   (flags
    (:standard -source-tree-root .)))
- (libraries core async market-data market-replay)
+ (libraries core core_unix.filename_unix async market-data market-replay)
  (preprocess
   (pps ppx_jane)))

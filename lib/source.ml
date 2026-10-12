@@ -71,3 +71,22 @@ let of_items items =
   in
   { read_symbol }
 ;;
+
+let of_data_dir ?on_error data_dir =
+  let read_symbol ~venue ~symbol ~streams ~start ~stop =
+    Market_data.Raw_reader.read
+      ?on_error
+      ~streams
+      ~data_dir
+      ~venue
+      ~symbol
+      ~start
+      ~stop
+      ()
+    |> Pipe.map ~f:(function
+      | Market_data.Raw_reader.Item.Frame { recv_ts; stream; frame } ->
+        Item.Frame { recv_ts; stream; symbol; frame }
+      | Gap { recv_ts; stream } -> Gap { recv_ts; stream; symbol })
+  in
+  { read_symbol }
+;;

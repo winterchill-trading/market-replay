@@ -40,3 +40,8 @@ val read
 
 (** An in-memory source; items of one venue must be in [recv_ts] order per symbol. *)
 val of_items : (Market_data.Venue.t * Item.t) list -> t
+
+(** The recorder's raw minute files under [<data_dir>/raw], read with
+    {!Market_data.Raw_reader}. [on_error] (default: logged) gets unreadable files and
+    lines. *)
+val of_data_dir : ?on_error:(Error.t -> unit) -> string -> t
