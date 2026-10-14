@@ -1,7 +1,7 @@
 # bin: market-replay binary
 
 `main.ml` starts the server: `-data-dir` (required), `-port` (default 8800), `-from`, `-to`, `-speed`.
-Speed 1 is recorded time, 2 is twice as fast, 0 is as fast as the client reads.
+The speeds 1, 2 and 0 are tested; the README says what speed 0 does on each route.
 
 Rules:
 
